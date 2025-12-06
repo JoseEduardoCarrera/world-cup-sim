@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { KnockoutMatch, MatchSource, Team } from "../types";
-import { Trophy } from "lucide-react";
+import { Trophy, AlertCircle } from "lucide-react";
 
 interface BracketProps {
   matches: KnockoutMatch[];
@@ -17,40 +17,82 @@ export const KnockoutBracket: React.FC<BracketProps> = ({
   thirdPlaceIds,
   onMatchUpdate,
 }) => {
-  // 1. Resolve 3rd place allocations
-  // We determine which 3rd place team goes to which match slot based on availability and config.
+  // 1. Deterministic Backtracking Solver for 3rd Place Allocation
+  // This simulates the fixed FIFA table by finding the first valid assignment
+  // given the constraints. Since the search order is fixed, it is deterministic.
   const allocatedThirdPlaces = useMemo(() => {
-    const allocation: Record<string, Team> = {};
-    const usedIds = new Set<string>();
-
-    // Process R32 matches to fill 3rd place slots
-    // Sort by ID to ensure deterministic allocation
+    // 1. Get all matches that require a 3rd place team
     const r32Matches = matches
-      .filter((m) => m.round === "R32")
-      .sort((a, b) => a.id.localeCompare(b.id));
+      .filter(
+        (m) =>
+          m.round === "R32" &&
+          (m.homeSource.type === "group_third" ||
+            m.awaySource.type === "group_third")
+      )
+      .sort((a, b) => parseInt(a.id) - parseInt(b.id)); // Sort by ID to ensure fixed order
 
-    r32Matches.forEach((match) => {
-      [match.homeSource, match.awaySource].forEach((source, idx) => {
-        if (source.type === "group_third") {
-          // Find valid candidates from the user's selected 3rd place teams
-          const candidates = source.validGroups
-            .map((g) => groups[g]?.[2])
-            .filter(
-              (t) => t && thirdPlaceIds.includes(t.id) && !usedIds.has(t.id)
-            );
+    // 2. Get the actual team objects for the selected IDs, sorted by Group ID (A, B, C...)
+    const selectedTeams = thirdPlaceIds
+      .map((id) => {
+        // Find the team in the groups structure (groups are sorted by standing, so 3rd place is index 2)
+        // But we just need to find the team object by ID from the `teams` map ideally,
+        // or search the groups. 'teams' map is complete.
+        return teams[id];
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.group.localeCompare(b.group)); // Fixed order: Group A team always tried before Group B team
 
-          if (candidates.length > 0) {
-            // Pick the first valid candidate (simple heuristic for sandbox)
-            const selected = candidates[0];
-            const key = `${match.id}-${idx === 0 ? "home" : "away"}`;
-            allocation[key] = selected;
-            usedIds.add(selected.id);
-          }
+    // 3. Backtracking Solver Function
+    const solve = (
+      matchIndex: number,
+      usedTeamIds: Set<string>
+    ): Record<string, Team> | null => {
+      // Base case: All matches filled
+      if (matchIndex === r32Matches.length) {
+        return {};
+      }
+
+      const match = r32Matches[matchIndex];
+      // Identify which side needs the 3rd place
+      const isHomeThird = match.homeSource.type === "group_third";
+      const source = isHomeThird ? match.homeSource : match.awaySource;
+      const key = `${match.id}-${isHomeThird ? "home" : "away"}`;
+
+      // If source is not actually group_third (shouldn't happen due to filter), skip
+      if (source.type !== "group_third")
+        return solve(matchIndex + 1, usedTeamIds);
+
+      const validGroups = source.validGroups;
+
+      // Find candidates for this specific match
+      const candidates = selectedTeams.filter(
+        (team) => !usedTeamIds.has(team.id) && validGroups.includes(team.group)
+      );
+
+      // Try each candidate
+      for (const team of candidates) {
+        // Recurse
+        const newUsed = new Set(usedTeamIds);
+        newUsed.add(team.id);
+
+        const result = solve(matchIndex + 1, newUsed);
+
+        if (result !== null) {
+          // Solution found in this branch
+          return { [key]: team, ...result };
         }
-      });
-    });
-    return allocation;
-  }, [matches, groups, thirdPlaceIds]);
+      }
+
+      // No candidates worked for this branch
+      return null;
+    };
+
+    // Run solver
+    const solution = solve(0, new Set());
+
+    // If no solution found (should not happen with valid 8/12 sets defined by FIFA), return empty
+    return solution || {};
+  }, [matches, teams, thirdPlaceIds]);
 
   // 2. Helper to get team for a specific match side
   const getTeam = (
@@ -81,7 +123,6 @@ export const KnockoutBracket: React.FC<BracketProps> = ({
     const final = matches.find((m) => m.round === "FINAL");
     if (!final) return { leftMatches: [], rightMatches: [], finalMatch: null };
 
-    // Recursive helper to find all upstream match IDs
     const traceUpstream = (rootId: string | undefined): Set<string> => {
       const set = new Set<string>();
       if (!rootId) return set;
@@ -184,8 +225,20 @@ export const KnockoutBracket: React.FC<BracketProps> = ({
     );
   };
 
+  const hasTBD =
+    Object.keys(allocatedThirdPlaces).length < 8 && thirdPlaceIds.length >= 8;
+
   return (
     <div className="w-full overflow-auto bg-slate-900/50 h-[85vh]">
+      {hasTBD && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 bg-red-500/90 text-white px-4 py-2 rounded shadow-lg flex items-center gap-2">
+          <AlertCircle size={16} />
+          <span className="text-sm">
+            Invalid 3rd Place Combination - No Valid Pattern Found
+          </span>
+        </div>
+      )}
+
       {/* Container: min-w-fit ensures it expands to fit content without clipping left side when scrolled */}
       <div className="flex justify-center items-center min-w-fit mx-auto h-full px-4 py-8">
         {/* LEFT BRACKET */}
