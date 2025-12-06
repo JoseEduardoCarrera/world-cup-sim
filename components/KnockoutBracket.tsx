@@ -1,6 +1,7 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { KnockoutMatch, MatchSource, Team } from "../types";
-import { Trophy, AlertCircle } from "lucide-react";
+import { Trophy, AlertCircle, Share2 } from "lucide-react";
+import { WinnerModal } from "./WinnerModal";
 
 interface BracketProps {
   matches: KnockoutMatch[];
@@ -17,6 +18,8 @@ export const KnockoutBracket: React.FC<BracketProps> = ({
   thirdPlaceIds,
   onMatchUpdate,
 }) => {
+  const [showWinnerModal, setShowWinnerModal] = useState(false);
+
   // 1. Deterministic Backtracking Solver for 3rd Place Allocation
   // This simulates the fixed FIFA table by finding the first valid assignment
   // given the constraints. Since the search order is fixed, it is deterministic.
@@ -227,6 +230,7 @@ export const KnockoutBracket: React.FC<BracketProps> = ({
 
   const hasTBD =
     Object.keys(allocatedThirdPlaces).length < 8 && thirdPlaceIds.length >= 8;
+  const winner = finalMatch?.winnerId ? teams[finalMatch.winnerId] : null;
 
   return (
     <div className="w-full overflow-auto bg-slate-900/50 h-[85vh]">
@@ -261,17 +265,28 @@ export const KnockoutBracket: React.FC<BracketProps> = ({
         </div>
 
         {/* CENTER FINAL */}
-        <div className="flex flex-col justify-center items-center px-4 shrink-0">
-          <div className="mb-4 text-center">
+        <div className="flex flex-col justify-center items-center px-4 shrink-0 gap-6">
+          <div className="text-center">
             <Trophy className="w-10 h-10 text-yellow-500 mx-auto drop-shadow-[0_0_15px_rgba(234,179,8,0.5)]" />
             <h2 className="text-sm font-bold text-white mt-1 uppercase tracking-widest">
               Final
             </h2>
           </div>
+
           {finalMatch ? (
             <MatchCard match={finalMatch} isFinal />
           ) : (
             <div className="text-slate-500 text-xs">Loading...</div>
+          )}
+
+          {winner && (
+            <button
+              onClick={() => setShowWinnerModal(true)}
+              className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 text-white text-xs font-bold uppercase tracking-wider rounded-full shadow-lg shadow-yellow-500/20 transform hover:scale-105 transition-all"
+            >
+              <Share2 size={14} />
+              <span>Share Winner</span>
+            </button>
           )}
         </div>
 
@@ -294,6 +309,14 @@ export const KnockoutBracket: React.FC<BracketProps> = ({
           ))}
         </div>
       </div>
+
+      {winner && (
+        <WinnerModal
+          winner={winner}
+          isOpen={showWinnerModal}
+          onClose={() => setShowWinnerModal(false)}
+        />
+      )}
     </div>
   );
 };
